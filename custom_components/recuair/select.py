@@ -5,14 +5,16 @@ import re
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .api import RecuairApi, RecuairApiError
-from .const import DOMAIN, MODE_AUTO, MODE_OPTIONS
+from .api import RecuairApiError
+from .const import DOMAIN, MODEL, MODE_AUTO, MODE_OPTIONS
+from .coordinator import RecuairCoordinator
+from .identity import mac_connection
 
 
 def _normalize_mode(mode: str) -> str | None:
@@ -42,52 +44,61 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Recuair select entities from config entry."""
-    api: RecuairApi = hass.data[DOMAIN][entry.entry_id]
+    coordinator: RecuairCoordinator = hass.data[DOMAIN][entry.entry_id]
     device_info = DeviceInfo(
         identifiers={(DOMAIN, entry.unique_id)},
+        connections=mac_connection(entry),
         name=entry.title,
         manufacturer="Recuair",
-        model="DC40",
-        configuration_url=f"http://{entry.data[CONF_HOST]}",
+        model=MODEL,
+        configuration_url=coordinator.api.configuration_url,
     )
-    async_add_entities([RecuairModeSelect(api, entry, device_info)])
+    async_add_entities([RecuairModeSelect(coordinator, entry, device_info)])
 
 
-class RecuairModeSelect(SelectEntity):
+class RecuairModeSelect(CoordinatorEntity, SelectEntity):
     """Select entity for Recuair operating mode."""
 
     _attr_has_entity_name = True
     _attr_name = "Mode"
     _attr_options = MODE_OPTIONS
-    _attr_should_poll = True
 
-    def __init__(self, api: RecuairApi, entry: ConfigEntry, device_info: DeviceInfo) -> None:
+    def __init__(
+        self,
+        coordinator: RecuairCoordinator,
+        entry: ConfigEntry,
+        device_info: DeviceInfo,
+    ) -> None:
         """Initialize the mode select entity."""
-        self._api = api
+        super().__init__(coordinator)
         self._entry = entry
         self._attr_device_info = device_info
         self._attr_unique_id = f"{entry.entry_id}_mode"
         self._attr_current_option = MODE_AUTO
+        self._update_from_coordinator()
 
-    async def async_added_to_hass(self) -> None:
-        """Update initial state when entity is added."""
-        await super().async_added_to_hass()
-        await self.async_update()
-
-    async def async_update(self) -> None:
-        """Fetch current mode from device state."""
-        data = await self._api.get_data()
+    @callback
+    def _update_from_coordinator(self) -> None:
+        """Apply the reported operating mode from the shared poll."""
+        data = self.coordinator.data
         mode = (data or {}).get("mode")
         if isinstance(mode, str):
             normalized = _normalize_mode(mode)
             if normalized is not None:
                 self._attr_current_option = normalized
 
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Update the mode when the shared poll completes."""
+        self._update_from_coordinator()
+        super()._handle_coordinator_update()
+
     async def async_select_option(self, option: str) -> None:
         """Select a new device mode."""
         try:
-            await self._api.async_set_mode(option)
+            await self.coordinator.api.async_set_mode(option)
         except RecuairApiError as err:
             raise HomeAssistantError(str(err)) from err
         self._attr_current_option = option
         self.async_write_ha_state()
+        await self.coordinator.async_request_refresh()

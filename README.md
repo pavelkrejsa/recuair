@@ -25,14 +25,15 @@ It also provides control entities:
 - **Mode (Select)**: `auto`, `off`, `holiday`, `bypass`, `1`, `2`, `3`, `4`
 - **Light Intensity (Number)**: 0-5
 
-## Setup
+## Install with HACS
 
-1. **Copy Files**: Copy the `recuair` directory into your Home Assistant `custom_components` folder.
-2. **Restart Home Assistant**: Restart your Home Assistant instance to allow it to detect the new integration.
-3. **Add Integration**:
-    - Navigate to **Settings** > **Devices & Services**.
-    - Click the **+ ADD INTEGRATION** button.
-    - Search for "Recuair" and select it.
+1. In Home Assistant, open **HACS** and choose **Integrations**.
+2. Open the HACS menu, select **Custom repositories**, and add `https://github.com/pavelkrejsa/recuair` with category **Integration**.
+3. Find **Recuair** in HACS and download it.
+4. Restart Home Assistant to load the integration.
+5. Go to **Settings** > **Devices & Services**, select **Add Integration**, and search for **Recuair**.
+
+After installation, the DC40 should appear automatically in Home Assistant's discovered integrations. If it does not, add Recuair manually and enter its IP address.
 
 ## Configuration
 
