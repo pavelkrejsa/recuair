@@ -19,6 +19,11 @@ class RecuairApi:
         self._url = f"http://{self._ip_address}/"
         self._session = session
 
+    @property
+    def configuration_url(self) -> str:
+        """Return the local web interface URL for this device."""
+        return self._url
+
     async def _post_data(self, data: dict[str, str]) -> None:
         """Send a POST request to the Recuair unit.
 

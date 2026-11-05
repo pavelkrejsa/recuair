@@ -1,6 +1,7 @@
 """Constants for the Recuair integration."""
 
 DOMAIN = "recuair"
+MODEL = "DC40"
 
 MODE_AUTO = "auto"
 MODE_OFF = "off"
