@@ -9,15 +9,15 @@ from homeassistant.components.light import (
     LightEntity,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util.color import color_hs_to_RGB
 
-from .api import RecuairApi, RecuairApiError
+from .api import RecuairApiError
 from .const import DOMAIN
+from .coordinator import RecuairDataUpdateCoordinator
 
 
 def _intensity_to_brightness(intensity: int) -> int:
@@ -36,34 +36,47 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Recuair light entities from config entry."""
-    api: RecuairApi = hass.data[DOMAIN][entry.entry_id]
-    device_info = DeviceInfo(
-        identifiers={(DOMAIN, entry.unique_id)},
-        name=entry.title,
-        manufacturer="Recuair",
-        model="DC40",
-        configuration_url=f"http://{entry.data[CONF_HOST]}",
-    )
-    async_add_entities([RecuairLight(api, entry, device_info)])
+    coordinator: RecuairDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    async_add_entities([RecuairLight(coordinator, entry)])
 
 
-class RecuairLight(LightEntity):
+class RecuairLight(CoordinatorEntity[RecuairDataUpdateCoordinator], LightEntity):
     """Native Home Assistant light entity for Recuair."""
 
     _attr_has_entity_name = True
     _attr_name = "Light"
-    _attr_should_poll = True
     _attr_supported_color_modes = {ColorMode.RGB}
     _attr_color_mode = ColorMode.RGB
 
-    def __init__(self, api: RecuairApi, entry: ConfigEntry, device_info: DeviceInfo) -> None:
+    def __init__(
+        self,
+        coordinator: RecuairDataUpdateCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
         """Initialize the light entity."""
-        self._api = api
-        self._entry = entry
-        self._attr_device_info = device_info
+        super().__init__(coordinator)
+        self._attr_device_info = coordinator.device_info
         self._attr_unique_id = f"{entry.entry_id}_light"
-        self._intensity = 0
-        self._rgb = (255, 255, 255)
+
+    @property
+    def _intensity(self) -> int:
+        """Return current Recuair intensity (0-5) from coordinator data."""
+        value = (self.coordinator.data or {}).get("light_intensity")
+        if isinstance(value, int):
+            return value
+        return 0
+
+    @property
+    def _rgb(self) -> tuple[int, int, int]:
+        """Return current RGB color from coordinator data."""
+        rgb = (self.coordinator.data or {}).get("light_rgb")
+        if (
+            isinstance(rgb, tuple)
+            and len(rgb) == 3
+            and all(isinstance(value, int) for value in rgb)
+        ):
+            return rgb
+        return (255, 255, 255)
 
     @property
     def is_on(self) -> bool:
@@ -79,29 +92,6 @@ class RecuairLight(LightEntity):
     def rgb_color(self) -> tuple[int, int, int]:
         """Return current RGB color."""
         return self._rgb
-
-    async def async_added_to_hass(self) -> None:
-        """Load initial state when entity is added."""
-        await super().async_added_to_hass()
-        await self.async_update()
-
-    async def async_update(self) -> None:
-        """Fetch latest light state from device."""
-        data = await self._api.get_data()
-        if not data:
-            return
-
-        intensity = data.get("light_intensity")
-        if isinstance(intensity, int):
-            self._intensity = intensity
-
-        rgb = data.get("light_rgb")
-        if (
-            isinstance(rgb, tuple)
-            and len(rgb) == 3
-            and all(isinstance(value, int) for value in rgb)
-        ):
-            self._rgb = rgb
 
     async def async_turn_on(self, **kwargs) -> None:
         """Turn on light with optional brightness and RGB values."""
@@ -125,20 +115,21 @@ class RecuairLight(LightEntity):
         red, green, blue = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
 
         try:
-            await self._api.async_set_light(intensity=intensity, red=red, green=green, blue=blue)
+            await self.coordinator.api.async_set_light(
+                intensity=intensity, red=red, green=green, blue=blue
+            )
         except RecuairApiError as err:
             raise HomeAssistantError(str(err)) from err
 
-        self._intensity = intensity
-        self._rgb = (red, green, blue)
-        self.async_write_ha_state()
+        self.coordinator.async_update_local_state(
+            {"light_intensity": intensity, "light_rgb": (red, green, blue)}
+        )
 
     async def async_turn_off(self, **kwargs) -> None:
         """Turn off light."""
         try:
-            await self._api.async_light_off()
+            await self.coordinator.api.async_light_off()
         except RecuairApiError as err:
             raise HomeAssistantError(str(err)) from err
 
-        self._intensity = 0
-        self.async_write_ha_state()
+        self.coordinator.async_update_local_state({"light_intensity": 0})

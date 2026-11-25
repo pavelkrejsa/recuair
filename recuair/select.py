@@ -5,14 +5,14 @@ import re
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .api import RecuairApi, RecuairApiError
+from .api import RecuairApiError
 from .const import DOMAIN, MODE_AUTO, MODE_OPTIONS
+from .coordinator import RecuairDataUpdateCoordinator
 
 
 def _normalize_mode(mode: str) -> str | None:
@@ -42,52 +42,41 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Recuair select entities from config entry."""
-    api: RecuairApi = hass.data[DOMAIN][entry.entry_id]
-    device_info = DeviceInfo(
-        identifiers={(DOMAIN, entry.unique_id)},
-        name=entry.title,
-        manufacturer="Recuair",
-        model="DC40",
-        configuration_url=f"http://{entry.data[CONF_HOST]}",
-    )
-    async_add_entities([RecuairModeSelect(api, entry, device_info)])
+    coordinator: RecuairDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    async_add_entities([RecuairModeSelect(coordinator, entry)])
 
 
-class RecuairModeSelect(SelectEntity):
+class RecuairModeSelect(CoordinatorEntity[RecuairDataUpdateCoordinator], SelectEntity):
     """Select entity for Recuair operating mode."""
 
     _attr_has_entity_name = True
     _attr_name = "Mode"
     _attr_options = MODE_OPTIONS
-    _attr_should_poll = True
 
-    def __init__(self, api: RecuairApi, entry: ConfigEntry, device_info: DeviceInfo) -> None:
+    def __init__(
+        self,
+        coordinator: RecuairDataUpdateCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
         """Initialize the mode select entity."""
-        self._api = api
-        self._entry = entry
-        self._attr_device_info = device_info
+        super().__init__(coordinator)
+        self._attr_device_info = coordinator.device_info
         self._attr_unique_id = f"{entry.entry_id}_mode"
-        self._attr_current_option = MODE_AUTO
 
-    async def async_added_to_hass(self) -> None:
-        """Update initial state when entity is added."""
-        await super().async_added_to_hass()
-        await self.async_update()
-
-    async def async_update(self) -> None:
-        """Fetch current mode from device state."""
-        data = await self._api.get_data()
-        mode = (data or {}).get("mode")
+    @property
+    def current_option(self) -> str:
+        """Return the current normalized mode from shared coordinator data."""
+        mode = (self.coordinator.data or {}).get("mode")
         if isinstance(mode, str):
             normalized = _normalize_mode(mode)
             if normalized is not None:
-                self._attr_current_option = normalized
+                return normalized
+        return MODE_AUTO
 
     async def async_select_option(self, option: str) -> None:
         """Select a new device mode."""
         try:
-            await self._api.async_set_mode(option)
+            await self.coordinator.api.async_set_mode(option)
         except RecuairApiError as err:
             raise HomeAssistantError(str(err)) from err
-        self._attr_current_option = option
-        self.async_write_ha_state()
+        self.coordinator.async_update_local_state({"mode": option})

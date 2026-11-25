@@ -5,6 +5,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 
 _LOGGER = logging.getLogger(__name__)
+DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=15)
 
 
 class RecuairApiError(Exception):
@@ -25,7 +26,12 @@ class RecuairApi:
         Recuair uses redirects to indicate success for settings writes.
         """
         try:
-            async with self._session.post(self._url, data=data, allow_redirects=False) as response:
+            async with self._session.post(
+                self._url,
+                data=data,
+                allow_redirects=False,
+                timeout=DEFAULT_TIMEOUT,
+            ) as response:
                 if response.status not in (
                     HTTPStatus.MOVED_PERMANENTLY,
                     HTTPStatus.SEE_OTHER,
@@ -65,7 +71,10 @@ class RecuairApi:
     async def get_data(self):
         """Get data from the Recuair unit."""
         try:
-            async with self._session.get(self._url) as response:
+            async with self._session.get(
+                self._url,
+                timeout=DEFAULT_TIMEOUT,
+            ) as response:
                 response.raise_for_status()
                 html = await response.text()
                 soup = BeautifulSoup(html, "html.parser")
